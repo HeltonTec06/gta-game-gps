@@ -563,7 +563,7 @@
       <button class="voice-test-btn" id="voiceTestBtn" title="Testar voz">▶ TESTAR</button><button class="voice-test-btn" id="voiceActivateBtn" title="Ativar voz no Safari">🔊 ATIVAR VOZ</button>
     </div>
     <button class="theme-btn auto" id="themeBtn" title="Modo automático dia/noite" aria-label="Modo automático dia/noite">☀</button>
-    <div class="gps-status" id="gpsStatus">GPS • AGUARDANDO</div>
+    <div class="gps-status" id="gpsStatus">GPS • AGUARDANDO</div><button id="gpsActivateBtn" class="pip-btn" style="display:none;margin-left:8px">📍 ATIVAR GPS</button>
   </div>
 </div>
 
@@ -593,7 +593,7 @@
       <span class="aaa-progress" id="routeProgress">0%</span>
     </div>
     <div class="aaa-nav-controls">
-      <button class="pip-btn" id="startSimBtn">▶ INICIAR</button>
+      <button class="pip-btn" id="startSimBtn">▶ INICIAR ROTA</button>
       <button class="pip-btn pip-btn-danger" id="clearRouteBtn">✕</button>
     </div>
   </div>
@@ -867,7 +867,7 @@
   let map = null, carMarker = null, destMarker = null;
   let lastLatLng = null, totalDistanceKm = 0, currentHeading = 0;
   let following = true, routeSteps = [], currentStepIdx = 0;
-  let simInterval = null, isSimulating = false;
+  let simInterval = null, isSimulating = false, isNavigating = false;
   let pendingDestLatLng = null, currentRouteCoords = null;
   let routeTotalKm = 0, routeTotalSeconds = 0, routeStartTime = null, lastRouteUpdate = 0;
 
@@ -875,7 +875,7 @@
     map = new maplibregl.Map({
       container: 'map',
       style: buildGameStyle(),
-      center: toLngLat(lastLatLng || INITIAL_POS),
+      center: toLngLat(INITIAL_POS),
       zoom: 16,
       attributionControl: true
     });
@@ -918,7 +918,8 @@
   // ---------- RENDER ----------
   function renderCar() {
     if (!map) return;
-    const pos = lastLatLng || INITIAL_POS;
+    if (!lastLatLng) { if (carMarker) { carMarker.remove(); carMarker = null; } return; }
+    const pos = lastLatLng;
     if (!carMarker) {
       const outer = document.createElement('div');
       const inner = document.createElement('div');
@@ -1005,14 +1006,23 @@
     if (routeSteps.length > 0) updateNavigationInstructions(latlng);
   }
 
+  function routeRemainingFromPosition(currentPos) {
+    if (!currentRouteCoords || currentRouteCoords.length < 2 || !routeTotalKm) return { remainingKm: haversineKm(currentPos, pendingDestLatLng), progress: 0 };
+    let bestIndex = 0, bestDist = Infinity;
+    for (let i=0; i<currentRouteCoords.length; i++) {
+      const d = haversineKm(currentPos, currentRouteCoords[i]);
+      if (d < bestDist) { bestDist = d; bestIndex = i; }
+    }
+    let remaining = 0;
+    for (let i=bestIndex; i<currentRouteCoords.length-1; i++) remaining += haversineKm(currentRouteCoords[i], currentRouteCoords[i+1]);
+    const traveled = Math.max(0, routeTotalKm - remaining);
+    return { remainingKm: remaining, progress: Math.max(0, Math.min(1, traveled / routeTotalKm)) };
+  }
+
   function updateTripStats(currentPos, speedKmh=0, simProgress=null) {
     if (!routeTotalKm || !pendingDestLatLng) return;
-    let remainingKm = haversineKm(currentPos, pendingDestLatLng);
-    if (currentRouteCoords && currentRouteCoords.length > 1) {
-      const end = currentRouteCoords[currentRouteCoords.length-1];
-      const fromEnd = haversineKm(currentPos, end);
-      if (fromEnd < remainingKm * 1.8) remainingKm = fromEnd;
-    }
+    const routeState = routeRemainingFromPosition(currentPos);
+    let remainingKm = routeState.remainingKm;
     if (simProgress !== null) remainingKm = Math.max(0, routeTotalKm * (1 - simProgress));
     document.getElementById('remainingDist').textContent = remainingKm.toFixed(1).replace('.', ',');
     let remainingSeconds;
@@ -1064,9 +1074,9 @@
       document.getElementById('turnAction').textContent = action.split(' • ')[0];
       document.getElementById('nextStreet').textContent = nextStep.name ? `NA ${nextStep.name}` : 'PRÓXIMA VIA';
       document.getElementById('navArrowBig').innerHTML = getManeuverIcon(nextStep.maneuver);
-      const progress = routeTotalKm ? Math.max(0, Math.min(100, Math.round((1 - haversineKm(currentPos, pendingDestLatLng) / routeTotalKm) * 100))) : 0;
+      const progress = routeTotalKm ? Math.round(routeRemainingFromPosition(currentPos).progress * 100) : 0;
       document.getElementById('routeProgress').textContent = `${progress}%`;
-      announceNavigation(nextStep.maneuver, distToTurn, nextStep.name || 'próxima via');
+      if (isNavigating) announceNavigation(nextStep.maneuver, distToTurn, nextStep.name || 'próxima via');
       if (distToTurn < 18) { currentStepIdx++; lastSpokenKey=''; }
     } else {
       document.getElementById('turnDist').textContent = 'AGORA';
@@ -1075,7 +1085,7 @@
       document.getElementById('navArrowBig').innerHTML = getManeuverIcon({type:'arrive'});
       document.getElementById('routeProgress').textContent = '100%';
       updateTripStats(currentPos, 0, 1);
-      if(lastSpokenKey!=='ARRIVE'){ speak('Você chegou ao destino. Missão concluída.'); lastSpokenKey='ARRIVE'; }
+      if(isNavigating && lastSpokenKey!=='ARRIVE'){ speak('Você chegou ao destino. Missão concluída.'); lastSpokenKey='ARRIVE'; isNavigating=false; document.getElementById('startSimBtn').textContent='▶ INICIAR ROTA'; }
     }
     updateTripStats(currentPos, Number(document.getElementById('speedValue').textContent)||0);
   }
@@ -1100,7 +1110,12 @@
     if (!query) return;
     searchBtn.innerText = '...';
     try {
-      const bias = lastLatLng || INITIAL_POS;
+      if (!lastLatLng) {
+        showToast('📍 AGUARDE O GPS LOCALIZAR VOCÊ ANTES DE PESQUISAR');
+        searchBtn.innerText = 'Buscar';
+        return;
+      }
+      const bias = lastLatLng;
       const d = 0.6;
       const viewbox = `${bias[1]-d},${bias[0]+d},${bias[1]+d},${bias[0]-d}`;
       const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=4&viewbox=${viewbox}&bounded=0`);
@@ -1134,7 +1149,8 @@
     renderDest();
     showToast('Gerando rota...');
 
-    const start = lastLatLng || INITIAL_POS;
+    if (!lastLatLng) { showToast('📍 GPS AINDA NÃO LOCALIZOU VOCÊ'); return; }
+    const start = lastLatLng;
     try {
       const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${start[1]},${start[0]};${destLatLng[1]},${destLatLng[0]}?overview=full&geometries=geojson&steps=true`);
       const data = await res.json();
@@ -1159,47 +1175,40 @@
   }
 
   document.getElementById('startSimBtn').addEventListener('click', () => {
-    if (routeSteps.length === 0) return;
-    if (simInterval) clearInterval(simInterval);
-    isSimulating = true;
+    if (routeSteps.length === 0 || !pendingDestLatLng) {
+      showToast('PESQUISE UM DESTINO E TRACE A ROTA PRIMEIRO');
+      return;
+    }
+    if (!lastLatLng) {
+      showToast('📍 AGUARDE O GPS LOCALIZAR VOCÊ');
+      requestGPSPermission();
+      return;
+    }
+    isNavigating = true;
+    isSimulating = false;
     following = true;
-    setDrivingView(true);
-    let simPoints = [];
-    routeSteps.forEach(step => { step.geometry.coordinates.forEach(c => simPoints.push([c[1], c[0]])); });
-    simPoints = simPoints.filter((p,i,a)=> i===0 || haversineKm(a[i-1],p)>0.001);
-    let index = 0;
-    lastSpokenKey='';
+    currentStepIdx = 0;
+    lastSpokenKey = '';
     routeStartTime = Date.now();
-    speak('Trajeto iniciado. Prepare-se para a primeira orientação.');
-    showToast('🚗 TRAJETO INICIADO • ROTA ATIVA');
-    simInterval = setInterval(() => {
-      if (index >= simPoints.length) {
-        clearInterval(simInterval);
-        document.getElementById('speedValue').textContent = '0';
-        updateTripStats(simPoints[simPoints.length-1], 0, 1);
-        setDrivingView(false);
-        speak('Você chegou ao destino. Missão concluída.');
-        showToast('🏁 CHEGOU AO DESTINO • MISSÃO CONCLUÍDA!');
-        isSimulating = false;
-        return;
-      }
-      const speed = Math.floor(Math.random() * 15) + 40;
-      const progress = index / Math.max(1, simPoints.length-1);
-      updateCarPosition(simPoints[index], speed);
-      updateTripStats(simPoints[index], speed, progress);
-      index++;
-    }, 300);
+    document.getElementById('startSimBtn').textContent = '■ NAVEGANDO';
+    setDrivingView(true);
+    updateNavigationInstructions(lastLatLng);
+    updateTripStats(lastLatLng, Number(document.getElementById('speedValue').textContent)||0);
+    speak('Rota iniciada. Siga as instruções para o destino.');
+    showToast('🧭 NAVEGAÇÃO INICIADA • GPS ATIVO');
   });
 
   document.getElementById('clearRouteBtn').addEventListener('click', () => {
     if (simInterval) clearInterval(simInterval);
     isSimulating = false;
+    isNavigating = false;
     setDrivingView(false);
     routeSteps = []; currentRouteCoords = null; pendingDestLatLng = null; routeTotalKm = 0; routeTotalSeconds = 0; routeStartTime = null;
     renderDest();
     const src = map.getSource('route');
     if (src) src.setData({ type: 'Feature', geometry: { type: 'LineString', coordinates: [] } });
     navCard.style.display = 'none';
+    document.getElementById('startSimBtn').textContent = '▶ INICIAR ROTA';
     showToast('TRAJETO CANCELADO • VOLTANDO AO MAPA');
   });
 
@@ -1369,10 +1378,10 @@
     gpsStatus.textContent = ok ? 'SINAL GPS ATIVO' : (detail || 'SEM SINAL DE GPS');
   }
 
-  function startGPS() {
+  async function requestGPSPermission() {
     if (!window.isSecureContext && location.hostname !== 'localhost') {
       setGpsStatus(false, 'GPS • HTTPS NECESSÁRIO');
-      showToast('📍 NO IPHONE, O GPS EXIGE HTTPS');
+      showToast('📍 Abra o GPS pelo endereço HTTPS, não pelo arquivo HTML');
       return;
     }
     if (!('geolocation' in navigator)) {
@@ -1380,27 +1389,50 @@
       showToast('GEOLOCALIZAÇÃO NÃO SUPORTADA');
       return;
     }
-    if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-    watchId = navigator.geolocation.watchPosition(
-      (pos) => {
-        if (isSimulating) return;
-        setGpsStatus(true); gpsErrorNotified = false;
-        const speed = Number.isFinite(pos.coords.speed) && pos.coords.speed >= 0 ? pos.coords.speed * 3.6 : 0;
-        updateCarPosition([pos.coords.latitude, pos.coords.longitude], speed);
-      },
-      (err) => {
-        let msg = 'SEM SINAL DE GPS';
-        if (err.code === 1) msg = 'GPS • PERMISSÃO NEGADA';
-        if (err.code === 2) msg = 'GPS • SINAL INDISPONÍVEL';
-        if (err.code === 3) msg = 'GPS • TEMPO ESGOTADO';
-        setGpsStatus(false, msg);
-        if (!gpsErrorNotified) {
-          showToast(err.code === 1 ? '📍 PERMITA LOCALIZAÇÃO NO SAFARI' : 'SEM SINAL GPS • TENTANDO NOVAMENTE');
-          gpsErrorNotified = true;
+    setGpsStatus(false, 'GPS • SOLICITANDO PERMISSÃO…');
+    try {
+      if (navigator.permissions?.query) {
+        const permission = await navigator.permissions.query({name:'geolocation'});
+        if (permission.state === 'denied') {
+          setGpsStatus(false, 'GPS • PERMISSÃO BLOQUEADA');
+          showToast('📍 Localização bloqueada. Ative a Localização para este site nos ajustes do Safari.');
+          document.getElementById('gpsActivateBtn')?.style.setProperty('display','inline-flex');
+          return;
         }
-        if (!lastLatLng) updateCarPosition(INITIAL_POS, 0);
-      },
-      { enableHighAccuracy: true, maximumAge: 1500, timeout: 10000 }
+      }
+    } catch(e) {}
+    if (watchId !== null) navigator.geolocation.clearWatch(watchId);
+    const applyPosition = (pos) => {
+      if (isSimulating) return;
+      const accuracy = Number(pos.coords.accuracy);
+      if (!Number.isFinite(accuracy) || accuracy > 250) {
+        setGpsStatus(false, `GPS • PRECISÃO ${Math.round(accuracy || 0)} m`);
+      } else {
+        setGpsStatus(true, `SINAL GPS • ±${Math.round(accuracy)} m`);
+      }
+      gpsErrorNotified = false;
+      const next = [pos.coords.latitude, pos.coords.longitude];
+      const speed = Number.isFinite(pos.coords.speed) && pos.coords.speed >= 0 ? pos.coords.speed * 3.6 : 0;
+      updateCarPosition(next, speed);
+      if (map && !document.body.classList.contains('driving') && following) mapPanTo(next);
+    };
+    const geoError = (err) => {
+      let msg = 'SEM SINAL DE GPS';
+      if (err.code === 1) msg = 'GPS • PERMISSÃO NEGADA';
+      if (err.code === 2) msg = 'GPS • SINAL INDISPONÍVEL';
+      if (err.code === 3) msg = 'GPS • TEMPO ESGOTADO';
+      setGpsStatus(false, msg);
+      if (!gpsErrorNotified) {
+        showToast(err.code === 1 ? '📍 Permissão negada. Toque em ATIVAR GPS.' : '📍 Procurando localização precisa…');
+        if (err.code === 1) document.getElementById('gpsActivateBtn')?.style.setProperty('display','inline-flex');
+        gpsErrorNotified = true;
+      }
+    };
+    navigator.geolocation.getCurrentPosition(applyPosition, geoError, { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 });
+    watchId = navigator.geolocation.watchPosition(
+      applyPosition,
+      geoError,
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
     );
   }
 
@@ -1423,6 +1455,8 @@
   }
 
   setupIOS();
+  document.getElementById('gpsActivateBtn')?.addEventListener('click', requestGPSPermission);
+  requestGPSPermission();
   initMap();
   setNightMode(isNightAt(INITIAL_POS), false);
   setInterval(() => updateAutoTheme(lastLatLng || INITIAL_POS), 60000);
@@ -1432,13 +1466,13 @@
     window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js').catch(() => {}));
   }
 
-  startGPS();
+  requestGPSPermission();
 
   window.addEventListener('resize', () => {
     if (map) map.resize();
   });
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && !isSimulating) startGPS();
+    if (!document.hidden && !isSimulating) requestGPSPermission();
   });
 
   window.addEventListener('keydown', (e) => {
