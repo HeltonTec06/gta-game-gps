@@ -1,7 +1,7 @@
 {
   "name":"GTA Game GPS",
   "short_name":"GTA GPS",
-  "description":"GPS gamer com navegação por voz, rota real e modo condução.",
+  "description":"GPS gamer com navegação por voz, rota real, POIs clicáveis e modo condução 3D.",
   "lang":"pt-BR",
   "start_url":"./",
   "scope":"./",
