@@ -3,7 +3,7 @@
   "short_name": "GTA GPS",
   "description": "GPS temático gamer com navegação, voz, veículos e modo noturno automático.",
   "lang": "pt-BR",
-  "start_url": "./",
+  "start_url": "./GTA_GAME_GPS_V10.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "any",

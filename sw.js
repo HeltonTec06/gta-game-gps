@@ -1,6 +1,6 @@
-const CACHE = 'gta-gps-v9-shell';
+const CACHE = 'gta-gps-v10-shell';
 const APP_SHELL = [
-  './index.html',
+  './GTA_GAME_GPS_V10.html',
   './manifest.webmanifest',
   './icons/icon-180.png',
   './icons/icon-192.png',
@@ -19,6 +19,6 @@ self.addEventListener('fetch', event => {
   if (url.origin === location.origin) {
     event.respondWith(caches.match(req).then(cached => cached || fetch(req).then(res => {
       const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); return res;
-    }).catch(() => caches.match('./index.html'))));
+    }).catch(() => caches.match('./GTA_GAME_GPS_V10.html'))));
   }
 });
